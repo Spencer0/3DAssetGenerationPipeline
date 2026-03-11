@@ -3,3 +3,5 @@ threejs-test/assets/*.glb
 threejs-test/assets/manifest.json
 blender/*.blend
 .DS_Store
+__pycache__/
+*.blend1

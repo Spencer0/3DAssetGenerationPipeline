@@ -1,0 +1,16 @@
+{
+  "name": "katamari-asset-generator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node threejs-test/tools/build-manifest.js && vite --config threejs-test/vite.config.js",
+    "build": "node threejs-test/tools/build-manifest.js && vite build --config threejs-test/vite.config.js",
+    "preview": "vite preview --config threejs-test/vite.config.js"
+  },
+  "devDependencies": {
+    "vite": "^5.2.0"
+  },
+  "dependencies": {
+    "three": "^0.161.0"
+  }
+}

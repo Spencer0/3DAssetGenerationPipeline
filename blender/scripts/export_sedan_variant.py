@@ -6,7 +6,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from common import parse_args
+from common import parse_args, get_palette_material, apply_material
 
 BASE_BLEND = "blender/car_sedan_base.blend"
 BASE_LENGTH = 3.8
@@ -51,6 +51,7 @@ def main():
         "wheelbase": 2.4,
         "cabin_offset": 0.0,
         "bumper_depth": 0.0,
+        "body_color": "matte_red",
     })
 
     bpy.ops.wm.open_mainfile(filepath=BASE_BLEND)
@@ -91,6 +92,11 @@ def main():
         move_x(get(name), wheel_delta)
     for name in ["wheel_rear_l", "wheel_rear_r", "well_rear_l", "well_rear_r"]:
         move_x(get(name), -wheel_delta)
+
+    # Apply body color
+    body = get("body")
+    if body:
+        apply_material(body, get_palette_material(args.body_color))
 
     # Apply boolean modifiers after moving cutters
     apply_modifiers(get("body"))

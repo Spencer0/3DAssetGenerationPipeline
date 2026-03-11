@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-03-11T04:50:10.611Z",
+  "assets": [
+    "./apartment.glb",
+    "./basketball.glb",
+    "./car_sedan_lemon.glb",
+    "./car_sedan_mint.glb",
+    "./car_sedan_red.glb",
+    "./car_truck_lemon.glb",
+    "./car_truck_mint.glb",
+    "./car_truck_red.glb",
+    "./fence.glb",
+    "./fruit.glb",
+    "./tree.glb",
+    "./tree_large.glb",
+    "./tree_medium.glb",
+    "./tree_small.glb",
+    "./vending.glb"
+  ]
+}

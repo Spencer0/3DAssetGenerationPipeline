@@ -6,7 +6,9 @@ const files = readdirSync(assetsDir)
   .filter((name) => name.toLowerCase().endsWith(".glb"))
   .filter((name) => {
     const lower = name.toLowerCase();
-    if (lower.startsWith("car_") && lower !== "car_sedan.glb") return false;
+    if (lower.startsWith("car_")) {
+      return lower.startsWith("car_sedan_") || lower.startsWith("car_truck_");
+    }
     return true;
   })
   .sort();
@@ -17,4 +19,11 @@ const manifest = {
 };
 
 writeFileSync(join(assetsDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+const docsManifest = join(process.cwd(), "docs", "manifest.json");
+try {
+  writeFileSync(docsManifest, JSON.stringify(manifest, null, 2));
+} catch {
+  // docs may not exist; ignore
+}
 console.log(`Wrote manifest.json with ${files.length} assets.`);

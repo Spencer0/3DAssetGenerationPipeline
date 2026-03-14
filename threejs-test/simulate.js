@@ -1,391 +1,539 @@
-/**
- * simulate.js
- * Basic prefab simulation playground (Katamari-style).
- */
+// simulate.js - Katamari-style world simulator
+// Load via <script type="module" src="./simulate.js"></script> in simulate.html
+// Expects importmap with "three" and "three/addons/" mapped to CDN
 
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/loaders/GLTFLoader.js';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const GRID_CHUNKS = 10;     // 10x10 chunks
-const CHUNK_SIZE = 50;      // 50m per chunk
-const CELL = 1;
-const WORLD_SIZE = GRID_CHUNKS * CHUNK_SIZE;
+const CHUNK_SIZE = 50;        // meters per prefab chunk
+const GRID_CHUNKS = 25;       // 10x10 grid of chunks
+const WORLD_SIZE = CHUNK_SIZE * GRID_CHUNKS; // 500 m
+const CELL_SIZE = 1;          // 1 m per tile
 const PLAYER_RADIUS = 1;
 
-const ASSET_BASE = 'assets/';
-const PREFAB_BASE = 'assets/prefabs/';
-const PREFAB_MANIFEST = `${PREFAB_BASE}manifest.json`;
-const TEX_BASE = 'assets/textures/';
+const STREAM_RADIUS = 2;      // active chunk radius (1 => 3x3)
+const CACHE_LIMIT = 16;       // max cached chunks
+
+const PLAYER_SPEED = 100;      // m/s
+const CAMERA_SPEED = 150;      // m/s
+
+const ASSETS_BASE = './assets/';
+const PREFABS_BASE = `${ASSETS_BASE}prefabs/`;
+const TEXTURES_BASE = `${ASSETS_BASE}textures/`;
+const MANIFEST_URL = `${PREFABS_BASE}manifest.json`;
+
+const TILE_COLORS = {
+  empty: 0x7caa4f,
+  road_center: 0x444444,
+  road_dashed: 0x555555,
+  grass: 0x5fa832,
+  water: 0x2255aa,
+  sand: 0xe8d5a3,
+  pavement: 0x999977,
+};
 
 // ---------------------------------------------------------------------------
-// State
+// HUD / UI
 // ---------------------------------------------------------------------------
-let scene, camera, renderer;
-const keyState = new Set();
-const raycaster = new THREE.Raycaster();
-const mouse = new THREE.Vector2();
-
-const gltfLoader = new GLTFLoader();
-const assetCache = {};
-const collidables = []; // { mesh, box: THREE.Box3 }
-
-let playerGroup;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function makeAABBFromCenter(center, size) {
-  const half = size * 0.5;
-  return new THREE.Box3(
-    new THREE.Vector3(center.x - half, center.y - half, center.z - half),
-    new THREE.Vector3(center.x + half, center.y + half, center.z + half)
-  );
-}
-
-function aabbIntersects(a, b) {
-  return (
-    a.min.x <= b.max.x && a.max.x >= b.min.x &&
-    a.min.y <= b.max.y && a.max.y >= b.min.y &&
-    a.min.z <= b.max.z && a.max.z >= b.min.z
-  );
-}
-
-// ---------------------------------------------------------------------------
-// UI
-// ---------------------------------------------------------------------------
-function buildUI() {
+function buildHUD() {
   const style = document.createElement('style');
   style.textContent = `
-    body { margin: 0; overflow: hidden; background: #ecebe4; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
-    #hud { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(20,20,26,.85); color: #eee; padding: 8px 10px; border-radius: 6px; font-size: 12px; }
-    #hud a { color: #aee7ff; text-decoration: none; }
-    #status { margin-top: 6px; opacity: .8; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { overflow: hidden; background: #000; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    #hud {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 10;
+    }
+    #status {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.72); color: #7fff7f;
+      padding: 8px 22px; border-radius: 4px; font-size: 13px;
+      letter-spacing: 0.06em; border: 1px solid #2a2a2a;
+      transition: opacity 0.4s;
+    }
+    #controls {
+      position: absolute; bottom: 16px; left: 16px;
+      background: rgba(0,0,0,0.65); color: #aaa;
+      padding: 10px 16px; border-radius: 4px; font-size: 12px;
+      line-height: 1.7; border: 1px solid #2a2a2a;
+    }
+    #controls span { color: #fff; }
+    #score {
+      position: absolute; top: 16px; right: 16px;
+      background: rgba(0,0,0,0.65); color: #ffdd55;
+      padding: 8px 18px; border-radius: 4px; font-size: 14px;
+      letter-spacing: 0.08em; border: 1px solid #2a2a2a;
+    }
+    #home-link {
+      position: absolute; bottom: 16px; right: 16px;
+      pointer-events: all;
+      background: rgba(0,0,0,0.72); color: #7fa8ff;
+      padding: 8px 18px; border-radius: 4px; font-size: 12px;
+      border: 1px solid #2a2a2a; text-decoration: none;
+      transition: background 0.2s, color 0.2s;
+    }
+    #home-link:hover { background: #1a2a4a; color: #fff; }
   `;
   document.head.appendChild(style);
 
   const hud = document.createElement('div');
   hud.id = 'hud';
   hud.innerHTML = `
-    <div><strong>Simulate</strong> — WASD to roll, Arrow keys to move camera.</div>
-    <div><a href="./index.html">Back to Home</a></div>
-    <div id="status">Loading prefabs…</div>
+    <div id="status">Loading world...</div>
+    <div id="controls">
+      <span>WASD</span> Move &nbsp;|&nbsp; <span>Arrows</span> Camera &nbsp;|&nbsp; Roll into objects to collect
+    </div>
+    <div id="score">Collected: <span id="score-val">0</span></div>
+    <a id="home-link" href="./index.html">Back to Home</a>
   `;
   document.body.appendChild(hud);
-}
 
-function setStatus(text) {
-  const el = document.getElementById('status');
-  if (el) el.textContent = text;
+  return {
+    setStatus(msg) { document.getElementById('status').textContent = msg; },
+    hideStatus() { document.getElementById('status').style.opacity = '0'; },
+    setScore(n) { document.getElementById('score-val').textContent = n; },
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Scene setup
+// Main
 // ---------------------------------------------------------------------------
-function initScene() {
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+async function main() {
+  const hud = buildHUD();
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color('#e7e5dc');
-  scene.fog = new THREE.Fog('#e7e5dc', 120, 500);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+  scene.fog = new THREE.Fog(0x87ceeb, 80, 300);
 
-  camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.set(WORLD_SIZE * 0.5, 35, WORLD_SIZE * 0.5 + 40);
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 800);
+  const camOffset = new THREE.Vector3(0, 18, 22);
+  camera.position.copy(camOffset);
 
-  // Lighting
-  const hemi = new THREE.HemisphereLight('#f6f4ee', '#cfc9b8', 1.2);
-  scene.add(hemi);
+  const hemiLight = new THREE.HemisphereLight(0xaaddff, 0x447722, 0.9);
+  scene.add(hemiLight);
 
-  const sun = new THREE.DirectionalLight('#ffffff', 2.0);
-  sun.position.set(20, 40, 10);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 200;
-  sun.shadow.camera.left = sun.shadow.camera.bottom = -60;
-  sun.shadow.camera.right = sun.shadow.camera.top = 60;
-  scene.add(sun);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+  dirLight.position.set(120, 200, 80);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.set(2048, 2048);
+  dirLight.shadow.camera.near = 1;
+  dirLight.shadow.camera.far = 600;
+  dirLight.shadow.camera.left = -250;
+  dirLight.shadow.camera.right = 250;
+  dirLight.shadow.camera.top = 250;
+  dirLight.shadow.camera.bottom = -250;
+  scene.add(dirLight);
 
-  // Ground
+  const ambLight = new THREE.AmbientLight(0xffffff, 0.3);
+  scene.add(ambLight);
+
   const groundGeo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
-  groundGeo.rotateX(-Math.PI / 2);
-  const groundMat = new THREE.MeshLambertMaterial({ color: '#d9d6cc' });
+  const groundMat = new THREE.MeshLambertMaterial({ color: 0x6aaa42 });
   const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.receiveShadow = true;
+  ground.rotation.x = -Math.PI / 2;
   ground.position.set(WORLD_SIZE / 2, 0, WORLD_SIZE / 2);
+  ground.receiveShadow = true;
   scene.add(ground);
 
-  const gridHelper = new THREE.GridHelper(WORLD_SIZE, GRID_CHUNKS * 5, '#c7c3b8', '#d7d3c8');
-  gridHelper.position.set(WORLD_SIZE / 2, 0.002, WORLD_SIZE / 2);
+  const gridHelper = new THREE.GridHelper(WORLD_SIZE, GRID_CHUNKS * 5, 0x333333, 0x222222);
+  gridHelper.position.set(WORLD_SIZE / 2, 0.01, WORLD_SIZE / 2);
+  gridHelper.material.opacity = 0.18;
+  gridHelper.material.transparent = true;
   scene.add(gridHelper);
 
   window.addEventListener('resize', () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
   });
-}
 
-// ---------------------------------------------------------------------------
-// Tile materials
-// ---------------------------------------------------------------------------
-const tileTexCache = {};
-function tileColor(id) {
-  if (id === 'road_center') return '#444455';
-  if (id === 'road_dashed') return '#555566';
-  return '#1a1a2e';
-}
-
-function makeTileMaterial(id) {
-  if (!tileTexCache[id]) {
-    const mat = new THREE.MeshLambertMaterial({ color: tileColor(id) });
-    const texLoader = new THREE.TextureLoader();
-    texLoader.load(
-      `${TEX_BASE}${id}.png`,
-      tex => { mat.map = tex; mat.needsUpdate = true; },
-      undefined,
-      () => { /* fallback */ }
-    );
-    tileTexCache[id] = mat;
+  const texLoader = new THREE.TextureLoader();
+  const texCache = {};
+  async function loadTexture(name) {
+    if (texCache[name]) return texCache[name];
+    return new Promise(resolve => {
+      texLoader.load(
+        `${TEXTURES_BASE}${name}`,
+        tex => { texCache[name] = tex; resolve(tex); },
+        undefined,
+        () => resolve(null)
+      );
+    });
   }
-  return tileTexCache[id];
-}
 
-// ---------------------------------------------------------------------------
-// Assets & prefabs
-// ---------------------------------------------------------------------------
-function loadAsset(filename) {
-  return new Promise((resolve, reject) => {
-    if (assetCache[filename]) { resolve(assetCache[filename]); return; }
-    gltfLoader.load(
-      ASSET_BASE + filename,
-      gltf => {
-        const group = gltf.scene;
-        group.traverse(n => {
-          if (n.isMesh) {
-            n.castShadow = true;
-            n.receiveShadow = true;
-          }
-        });
-        assetCache[filename] = group;
-        resolve(group);
-      },
-      undefined,
-      err => reject(err)
-    );
-  });
-}
+  const gltfLoader = new GLTFLoader();
+  const modelCache = {};
+  function loadModel(assetName) {
+    if (modelCache[assetName]) return Promise.resolve(modelCache[assetName]);
+    return new Promise(resolve => {
+      gltfLoader.load(
+        `${ASSETS_BASE}${assetName}`,
+        gltf => { modelCache[assetName] = gltf; resolve(gltf); },
+        undefined,
+        err => { console.warn(`GLB load failed: ${assetName}`, err); resolve(null); }
+      );
+    });
+  }
 
-async function loadPrefabList() {
+  // Load manifest
+  hud.setStatus('Loading manifest...');
+  let prefabFiles = ['suburb.json'];
   try {
-    const res = await fetch(PREFAB_MANIFEST, { cache: 'no-store' });
-    if (!res.ok) throw new Error('manifest not found');
-    const data = await res.json();
-    if (Array.isArray(data.prefabs) && data.prefabs.length > 0) return data.prefabs;
-  } catch (err) {
-    console.warn('[simulate] Prefab manifest missing, using default list.');
-  }
-  return ['suburb.json'];
-}
-
-async function loadPrefab(path) {
-  const res = await fetch(`${PREFAB_BASE}${path}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Failed to load prefab ${path}`);
-  return res.json();
-}
-
-function addTileMesh(x, z, id) {
-  if (id === 'empty') return;
-  const geo = new THREE.PlaneGeometry(CELL, CELL);
-  geo.rotateX(-Math.PI / 2);
-  const mat = makeTileMaterial(id).clone();
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x + 0.5, 0, z + 0.5);
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-}
-
-async function addPrefabAt(prefab, offsetX, offsetZ) {
-  // Tiles
-  if (Array.isArray(prefab.tiles)) {
-    for (let z = 0; z < prefab.tiles.length; z++) {
-      const row = prefab.tiles[z];
-      if (!Array.isArray(row)) continue;
-      for (let x = 0; x < row.length; x++) {
-        addTileMesh(offsetX + x, offsetZ + z, row[x]);
+    const mRes = await fetch(MANIFEST_URL);
+    if (mRes.ok) {
+      const mData = await mRes.json();
+      if (Array.isArray(mData.prefabs) && mData.prefabs.length) {
+        prefabFiles = mData.prefabs;
       }
     }
+  } catch (e) {
+    console.warn('Manifest missing, using fallback.', e);
   }
 
-  // Objects
-  if (Array.isArray(prefab.objects)) {
-    for (const obj of prefab.objects) {
-      if (!obj || !obj.asset || !Array.isArray(obj.pos)) continue;
-      try {
-        const template = await loadAsset(obj.asset);
-        const inst = template.clone(true);
-        inst.position.set(obj.pos[0] + offsetX, obj.pos[1] || 0, obj.pos[2] + offsetZ);
-        inst.rotation.y = obj.rotY || 0;
-        const scale = obj.scale || 1;
-        inst.scale.setScalar(scale);
-        scene.add(inst);
-
-        const box = new THREE.Box3().setFromObject(inst);
-        collidables.push({ mesh: inst, box });
-      } catch (err) {
-        console.warn('[simulate] failed to load asset', obj.asset, err);
-      }
-    }
-  }
-}
-
-async function buildWorld() {
-  const prefabList = await loadPrefabList();
-  setStatus(`Loading prefabs (${prefabList.length})…`);
-
-  const prefabs = [];
-  for (const p of prefabList) {
+  // Load prefabs
+  hud.setStatus(`Loading ${prefabFiles.length} prefab(s)...`);
+  const prefabDefs = [];
+  for (const pf of prefabFiles) {
     try {
-      const data = await loadPrefab(p);
-      prefabs.push({ name: p, data });
-    } catch (err) {
-      console.warn('[simulate] prefab load failed', p, err);
+      const res = await fetch(`${PREFABS_BASE}${pf}`);
+      if (res.ok) prefabDefs.push(await res.json());
+    } catch (e) {
+      console.warn(`Prefab load failed: ${pf}`, e);
     }
   }
-
-  if (!prefabs.length) {
-    setStatus('No prefabs found.');
+  if (!prefabDefs.length) {
+    hud.setStatus('No prefabs loaded.');
     return;
   }
 
-  setStatus('Spawning world…');
-  let idx = 0;
-  for (let gz = 0; gz < GRID_CHUNKS; gz++) {
-    for (let gx = 0; gx < GRID_CHUNKS; gx++) {
-      const prefab = prefabs[idx % prefabs.length].data;
-      const offsetX = gx * CHUNK_SIZE;
-      const offsetZ = gz * CHUNK_SIZE;
-      await addPrefabAt(prefab, offsetX, offsetZ);
-      idx += 1;
+  // Tile batching
+  const tileGeo = new THREE.PlaneGeometry(CELL_SIZE, CELL_SIZE);
+  tileGeo.rotateX(-Math.PI / 2);
+  const tilePadY = 0.005;
+  const tileMatCache = {};
+  let roadCenterTex = null;
+  let roadDashedTex = null;
+  let tileTexturesReady = false;
+
+  async function ensureTileTextures() {
+    if (tileTexturesReady) return;
+    roadCenterTex = await loadTexture('road_center.png');
+    roadDashedTex = await loadTexture('road_dashed.png');
+    tileTexturesReady = true;
+  }
+
+  function getTileMaterial(type) {
+    if (tileMatCache[type]) return tileMatCache[type];
+    let mat;
+    if (type === 'road_center' && roadCenterTex) {
+      mat = new THREE.MeshLambertMaterial({ map: roadCenterTex });
+    } else if (type === 'road_dashed' && roadDashedTex) {
+      mat = new THREE.MeshLambertMaterial({ map: roadDashedTex });
+    } else {
+      mat = new THREE.MeshLambertMaterial({ color: TILE_COLORS[type] ?? 0x888888 });
+    }
+    tileMatCache[type] = mat;
+    return mat;
+  }
+
+  function buildTileInstances(tiles, originX, originZ) {
+    const typePositions = new Map();
+    for (let z = 0; z < tiles.length; z++) {
+      const row = tiles[z];
+      for (let x = 0; x < row.length; x++) {
+        const type = row[x];
+        if (!type || type === 'empty') continue;
+        if (!typePositions.has(type)) typePositions.set(type, []);
+        typePositions.get(type).push({ x, z });
+      }
+    }
+
+    const meshes = [];
+    const tmp = new THREE.Object3D();
+    typePositions.forEach((positions, type) => {
+      const mat = getTileMaterial(type);
+      const inst = new THREE.InstancedMesh(tileGeo, mat, positions.length);
+      inst.receiveShadow = false;
+      for (let i = 0; i < positions.length; i++) {
+        const p = positions[i];
+        tmp.position.set(
+          originX + p.x * CELL_SIZE + CELL_SIZE / 2,
+          tilePadY,
+          originZ + p.z * CELL_SIZE + CELL_SIZE / 2
+        );
+        tmp.rotation.set(0, 0, 0);
+        tmp.updateMatrix();
+        inst.setMatrixAt(i, tmp.matrix);
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      meshes.push(inst);
+    });
+    return meshes;
+  }
+
+  // Chunk manager (streaming + cache)
+  const chunkMap = new Map();
+  const chunkCache = new Map();
+  const cacheOrder = [];
+  const loadingChunks = new Set();
+  let activeChunkKeys = new Set();
+
+  function chunkKey(cx, cz) { return `${cx},${cz}`; }
+  function parseChunkKey(key) { return key.split(',').map(n => parseInt(n, 10)); }
+  function inBounds(cx, cz) {
+    return cx >= 0 && cz >= 0 && cx < GRID_CHUNKS && cz < GRID_CHUNKS;
+  }
+
+  function cachePush(key, record) {
+    chunkCache.set(key, record);
+    cacheOrder.push(key);
+    if (cacheOrder.length > CACHE_LIMIT) {
+      const evictKey = cacheOrder.shift();
+      if (evictKey) chunkCache.delete(evictKey);
     }
   }
-  setStatus(`World ready: ${GRID_CHUNKS}x${GRID_CHUNKS} chunks.`);
-}
 
-// ---------------------------------------------------------------------------
-// Player
-// ---------------------------------------------------------------------------
-function spawnPlayer() {
-  playerGroup = new THREE.Group();
-  const geo = new THREE.SphereGeometry(PLAYER_RADIUS, 24, 18);
-  const mat = new THREE.MeshStandardMaterial({ color: '#a2d9ff', roughness: 0.35, metalness: 0.1 });
-  const sphere = new THREE.Mesh(geo, mat);
-  sphere.castShadow = true;
-  sphere.receiveShadow = true;
-  playerGroup.add(sphere);
-  playerGroup.position.set(WORLD_SIZE / 2, PLAYER_RADIUS, WORLD_SIZE / 2);
+  function cachePop(key) {
+    const rec = chunkCache.get(key);
+    if (!rec) return null;
+    chunkCache.delete(key);
+    const idx = cacheOrder.indexOf(key);
+    if (idx >= 0) cacheOrder.splice(idx, 1);
+    return rec;
+  }
+
+  async function buildChunk(cx, cz) {
+    const key = chunkKey(cx, cz);
+    const group = new THREE.Group();
+    group.name = `chunk-${key}`;
+
+    const idx = (cz * GRID_CHUNKS + cx) % prefabDefs.length;
+    const def = prefabDefs[idx] || {};
+    const originX = cx * CHUNK_SIZE;
+    const originZ = cz * CHUNK_SIZE;
+
+    const collidables = [];
+
+    if (Array.isArray(def.tiles)) {
+      await ensureTileTextures();
+      const tiles = buildTileInstances(def.tiles, originX, originZ);
+      tiles.forEach(m => group.add(m));
+    }
+
+    if (Array.isArray(def.objects)) {
+      for (const obj of def.objects) {
+        const gltf = await loadModel(obj.asset);
+        if (!gltf) continue;
+
+        const mesh = gltf.scene.clone(true);
+        mesh.position.set(
+          originX + (obj.pos[0] ?? 0),
+          obj.pos[1] ?? 0,
+          originZ + (obj.pos[2] ?? 0)
+        );
+        mesh.rotation.y = obj.rotY ?? 0;
+        const s = obj.scale ?? 1;
+        mesh.scale.set(s, s, s);
+
+        mesh.traverse(child => {
+          if (child.isMesh) {
+            child.castShadow = false;
+            child.receiveShadow = false;
+          }
+        });
+        group.add(mesh);
+
+        const box = new THREE.Box3().setFromObject(mesh);
+        collidables.push({ box, mesh });
+      }
+    }
+
+    return { key, cx, cz, group, collidables, lastUsed: performance.now() };
+  }
+
+  async function ensureChunk(cx, cz) {
+    if (!inBounds(cx, cz)) return;
+    const key = chunkKey(cx, cz);
+    if (chunkMap.has(key)) return;
+
+    const cached = cachePop(key);
+    if (cached) {
+      chunkMap.set(key, cached);
+      scene.add(cached.group);
+      return;
+    }
+
+    if (loadingChunks.has(key)) return;
+    loadingChunks.add(key);
+    try {
+      const rec = await buildChunk(cx, cz);
+      chunkMap.set(key, rec);
+      scene.add(rec.group);
+    } catch (e) {
+      console.warn('Chunk load failed', key, e);
+    } finally {
+      loadingChunks.delete(key);
+    }
+  }
+
+  function unloadChunk(key) {
+    const rec = chunkMap.get(key);
+    if (!rec) return;
+    scene.remove(rec.group);
+    chunkMap.delete(key);
+    rec.lastUsed = performance.now();
+    cachePush(key, rec);
+  }
+
+  function computeActiveKeys(cx, cz) {
+    const set = new Set();
+    for (let dz = -STREAM_RADIUS; dz <= STREAM_RADIUS; dz++) {
+      for (let dx = -STREAM_RADIUS; dx <= STREAM_RADIUS; dx++) {
+        const nx = cx + dx;
+        const nz = cz + dz;
+        if (inBounds(nx, nz)) set.add(chunkKey(nx, nz));
+      }
+    }
+    return set;
+  }
+
+  function syncActiveChunks(cx, cz) {
+    const desired = computeActiveKeys(cx, cz);
+    desired.forEach(key => {
+      if (!activeChunkKeys.has(key)) {
+        const [x, z] = parseChunkKey(key);
+        ensureChunk(x, z);
+      }
+    });
+    activeChunkKeys.forEach(key => {
+      if (!desired.has(key)) unloadChunk(key);
+    });
+    activeChunkKeys = desired;
+  }
+
+  // Player
+  const playerGroup = new THREE.Group();
+  const playerGeo = new THREE.SphereGeometry(PLAYER_RADIUS, 20, 20);
+  const playerMat = new THREE.MeshStandardMaterial({ color: 0xff4422, roughness: 0.5, metalness: 0.1 });
+  const player = new THREE.Mesh(playerGeo, playerMat);
+  player.castShadow = true;
+  playerGroup.add(player);
+
+  const spawnX = WORLD_SIZE / 2;
+  const spawnZ = WORLD_SIZE / 2;
+  playerGroup.position.set(spawnX, PLAYER_RADIUS, spawnZ);
   scene.add(playerGroup);
-}
 
-// ---------------------------------------------------------------------------
-// Input
-// ---------------------------------------------------------------------------
-function bindInput() {
-  window.addEventListener('keydown', e => {
-    keyState.add(e.key);
-    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
-  });
-  window.addEventListener('keyup', e => keyState.delete(e.key));
-}
+  const cameraAnchor = new THREE.Vector3(spawnX, 0, spawnZ);
 
-// ---------------------------------------------------------------------------
-// Update loop
-// ---------------------------------------------------------------------------
-function updatePlayer(dt) {
-  const speed = 8; // meters per second
-  const dx = (keyState.has('d') || keyState.has('D')) ? 1 : (keyState.has('a') || keyState.has('A')) ? -1 : 0;
-  const dz = (keyState.has('s') || keyState.has('S')) ? 1 : (keyState.has('w') || keyState.has('W')) ? -1 : 0;
+  // Input state
+  const keys = {};
+  window.addEventListener('keydown', e => { keys[e.code] = true; });
+  window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-  if (dx === 0 && dz === 0) return;
-  const dir = new THREE.Vector3(dx, 0, dz).normalize();
-  const delta = dir.multiplyScalar(speed * dt);
+  // Player AABB helper
+  const playerBox = new THREE.Box3();
 
-  const next = playerGroup.position.clone().add(delta);
-  next.x = clamp(next.x, PLAYER_RADIUS, WORLD_SIZE - PLAYER_RADIUS);
-  next.z = clamp(next.z, PLAYER_RADIUS, WORLD_SIZE - PLAYER_RADIUS);
+  let pickedCount = 0;
+  let lastChunkX = -1;
+  let lastChunkZ = -1;
 
-  // Roll the sphere
-  const moveVec = next.clone().sub(playerGroup.position);
-  if (moveVec.lengthSq() > 0) {
-    const axis = new THREE.Vector3(moveVec.z, 0, -moveVec.x).normalize();
-    const angle = moveVec.length() / PLAYER_RADIUS;
-    playerGroup.children[0].rotateOnAxis(axis, angle);
-  }
-  playerGroup.position.copy(next);
-}
+  hud.setStatus('Streaming chunks...');
 
-function updateCamera(dt) {
-  const camSpeed = 20;
-  let dx = 0;
-  let dz = 0;
-  if (keyState.has('ArrowUp')) dz -= 1;
-  if (keyState.has('ArrowDown')) dz += 1;
-  if (keyState.has('ArrowLeft')) dx -= 1;
-  if (keyState.has('ArrowRight')) dx += 1;
-  if (dx !== 0 || dz !== 0) {
-    const delta = new THREE.Vector3(dx, 0, dz).normalize().multiplyScalar(camSpeed * dt);
-    camera.position.add(delta);
-  }
-  camera.lookAt(playerGroup.position);
-}
+  function update(dt) {
+    // Player movement (WASD)
+    const moveDir = new THREE.Vector3();
+    if (keys['KeyW']) moveDir.z -= 1;
+    if (keys['KeyS']) moveDir.z += 1;
+    if (keys['KeyA']) moveDir.x -= 1;
+    if (keys['KeyD']) moveDir.x += 1;
+    if (moveDir.lengthSq() > 0) {
+      moveDir.normalize().multiplyScalar(PLAYER_SPEED * dt);
+      playerGroup.position.add(moveDir);
 
-function updateCollisions() {
-  const playerBox = makeAABBFromCenter(playerGroup.position, PLAYER_RADIUS * 2);
-  for (let i = collidables.length - 1; i >= 0; i--) {
-    const item = collidables[i];
-    if (aabbIntersects(playerBox, item.box)) {
-      playerGroup.attach(item.mesh);
-      collidables.splice(i, 1);
+      const rollAxis = new THREE.Vector3(moveDir.z, 0, -moveDir.x).normalize();
+      const rollAngle = moveDir.length() / PLAYER_RADIUS;
+      player.rotateOnWorldAxis(rollAxis, rollAngle);
     }
+
+    // Clamp player within world
+    const minB = PLAYER_RADIUS;
+    const maxB = WORLD_SIZE - PLAYER_RADIUS;
+    playerGroup.position.x = Math.max(minB, Math.min(maxB, playerGroup.position.x));
+    playerGroup.position.z = Math.max(minB, Math.min(maxB, playerGroup.position.z));
+    playerGroup.position.y = PLAYER_RADIUS;
+
+    // Chunk streaming
+    const cx = Math.floor(playerGroup.position.x / CHUNK_SIZE);
+    const cz = Math.floor(playerGroup.position.z / CHUNK_SIZE);
+    if (cx !== lastChunkX || cz !== lastChunkZ) {
+      syncActiveChunks(cx, cz);
+      lastChunkX = cx;
+      lastChunkZ = cz;
+    }
+
+    // Camera movement (Arrow keys)
+    if (keys['ArrowLeft']) cameraAnchor.x -= CAMERA_SPEED * dt;
+    if (keys['ArrowRight']) cameraAnchor.x += CAMERA_SPEED * dt;
+    if (keys['ArrowUp']) cameraAnchor.z -= CAMERA_SPEED * dt;
+    if (keys['ArrowDown']) cameraAnchor.z += CAMERA_SPEED * dt;
+
+    cameraAnchor.x = Math.max(0, Math.min(WORLD_SIZE, cameraAnchor.x));
+    cameraAnchor.z = Math.max(0, Math.min(WORLD_SIZE, cameraAnchor.z));
+
+    camera.position.set(
+      playerGroup.position.x + (cameraAnchor.x - WORLD_SIZE / 2) * 0.3,
+      camOffset.y,
+      playerGroup.position.z + camOffset.z + (cameraAnchor.z - WORLD_SIZE / 2) * 0.3
+    );
+    camera.lookAt(playerGroup.position);
+
+    // Collision detection (active chunks only)
+    playerBox.setFromCenterAndSize(
+      playerGroup.position,
+      new THREE.Vector3(PLAYER_RADIUS * 2, PLAYER_RADIUS * 2, PLAYER_RADIUS * 2)
+    );
+
+    activeChunkKeys.forEach(key => {
+      const rec = chunkMap.get(key);
+      if (!rec) return;
+      for (let i = rec.collidables.length - 1; i >= 0; i--) {
+        const c = rec.collidables[i];
+        if (playerBox.intersectsBox(c.box)) {
+          playerGroup.attach(c.mesh);
+          rec.collidables.splice(i, 1);
+          pickedCount += 1;
+          hud.setScore(pickedCount);
+        }
+      }
+    });
   }
+
+  const clock = new THREE.Clock();
+  renderer.setAnimationLoop(() => {
+    const dt = Math.min(clock.getDelta(), 0.1);
+    update(dt);
+    renderer.render(scene, camera);
+  });
+
+  // Initial chunk load
+  syncActiveChunks(Math.floor(spawnX / CHUNK_SIZE), Math.floor(spawnZ / CHUNK_SIZE));
+  hud.setStatus('World ready. Roll around to collect objects.');
+  setTimeout(() => hud.hideStatus(), 3000);
 }
 
-let lastTime = performance.now();
-function animate() {
-  requestAnimationFrame(animate);
-  const now = performance.now();
-  const dt = Math.min(0.05, (now - lastTime) / 1000);
-  lastTime = now;
-
-  updatePlayer(dt);
-  updateCamera(dt);
-  updateCollisions();
-
-  renderer.render(scene, camera);
-}
-
-// ---------------------------------------------------------------------------
-// Bootstrap
-// ---------------------------------------------------------------------------
-async function main() {
-  buildUI();
-  initScene();
-  bindInput();
-  spawnPlayer();
-  await buildWorld();
-  animate();
-}
-
-main();
+main().catch(err => {
+  console.error('Simulator error:', err);
+  const statusEl = document.getElementById('status');
+  if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+});

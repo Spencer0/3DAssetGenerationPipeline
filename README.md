@@ -27,6 +27,7 @@ This repo is a starter pipeline for a retro-anime, medium-poly asset kit exporte
 - `docs/style-guide.md`: Palette, materials, proportions, and naming rules.
 - `docs/asset-specs.md`: Target sizes and pivots for each asset.
 - `docs/export-checklist.md`: GLB export rules and Three.js validation steps.
+- `docs/prefabs.md`: Prefab chunk format and export notes.
 - `blender/scripts/`: Asset generation + export scripts.
 - `threejs-test/`: Minimal viewer to check assets.
 - `threejs-test/tools/`: Manifest generator for batch preview.

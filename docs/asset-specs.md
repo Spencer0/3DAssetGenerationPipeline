@@ -33,3 +33,14 @@
 ## Basketball
 - Diameter: 0.24m
 - Pivot: bottom center.
+
+## Traffic Sign
+- Pole height: 2.2m
+- Sign size: 0.7m (width/height)
+- Pivot: bottom center.
+
+## House
+- Footprint: 8m x 6m
+- Floors: 1 or 2 (3m per floor)
+- Roof height: ~2m
+- Pivot: bottom center.

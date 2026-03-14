@@ -16,10 +16,13 @@
       html, body { margin: 0; height: 100%; background: #f0efe9; }
       canvas { display: block; }
       #hint { position: absolute; top: 12px; left: 12px; padding: 6px 10px; background: rgba(255,255,255,0.85); font: 12px/1.3 sans-serif; }
+      #nav { position: absolute; top: 12px; right: 12px; }
+      #nav a { display: inline-block; padding: 6px 10px; background: rgba(255,255,255,0.85); color: #333; text-decoration: none; font: 12px/1.3 sans-serif; border: 1px solid #ddd; }
     </style>
   </head>
   <body>
     <div id="hint">Loads all GLBs listed in assets/manifest.json. Add files to assets/ and re-run npm run dev.</div>
-    <script type="module" src="./viewer.js?v=20260311"></script>
+    <div id="nav"><a href="./index.html">Home</a></div>
+    <script type="module" src="./viewer.js?v=20260313-house4-store"></script>
   </body>
 </html>

@@ -2,7 +2,7 @@ import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
 import { OrbitControls } from "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "https://unpkg.com/three@0.161.0/examples/jsm/loaders/GLTFLoader.js";
 
-console.log("viewer.js v20260311");
+console.log("viewer.js v20260313-house4-store");
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -82,6 +82,88 @@ function cloneFence(fence, count, spacing, rotationY, startX, startZ, axis = "x"
   return pieces;
 }
 
+function placeTrafficSigns(signs, aptBox) {
+  if (!signs.length) return;
+  const aptCenter = new THREE.Vector3();
+  aptBox.getCenter(aptCenter);
+
+  const lotZ = aptBox.max.z + 2.0;
+  const baseX = aptBox.max.x + 3.0;
+  const spacingZ = 2.2;
+
+  signs
+    .slice()
+    .sort((a, b) => {
+      const an = a.userData.assetName || "";
+      const bn = b.userData.assetName || "";
+      return an.localeCompare(bn);
+    })
+    .forEach((obj, i) => {
+      obj.position.set(baseX, 0, lotZ + i * spacingZ);
+      obj.rotation.y = Math.PI;
+
+      // Ensure the sign sits on the ground plane.
+      const box = new THREE.Box3().setFromObject(obj);
+      if (Number.isFinite(box.min.y)) {
+        obj.position.y -= box.min.y;
+      }
+    });
+}
+
+function placeHouses(houses, aptBox) {
+  if (!houses.length) return;
+  const aptCenter = new THREE.Vector3();
+  aptBox.getCenter(aptCenter);
+
+  const carDepth = 3.8;
+  const lotZ = aptBox.max.z + 2.0 + carDepth * 0.5;
+
+  const baseX = aptBox.max.x + 15.0;
+  const baseZ = lotZ + 8.0;
+  let cursorX = baseX;
+
+  houses
+    .slice()
+    .sort((a, b) => {
+      const an = a.userData.assetName || "";
+      const bn = b.userData.assetName || "";
+      return an.localeCompare(bn);
+    })
+    .forEach((obj, i) => {
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+
+      obj.position.set(cursorX + size.x * 0.5, 0, baseZ + i * 2.5);
+      obj.rotation.y = Math.PI;
+
+      if (Number.isFinite(box.min.y)) {
+        obj.position.y -= box.min.y;
+      }
+
+      cursorX += size.x + 4.0;
+    });
+}
+
+function placeStore(stores, aptBox) {
+  if (!stores.length) return;
+  const carDepth = 3.8;
+  const lotZ = aptBox.max.z + 2.0 + carDepth * 0.5;
+
+  const baseX = aptBox.min.x - 15.0;
+  const baseZ = lotZ + 8.0;
+
+  stores.forEach((obj) => {
+    obj.position.set(baseX, 0, baseZ);
+    obj.rotation.y = 0;
+
+    const box = new THREE.Box3().setFromObject(obj);
+    if (Number.isFinite(box.min.y)) {
+      obj.position.y -= box.min.y;
+    }
+  });
+}
+
 async function loadAssets() {
   if (url) {
     loader.load(`./assets/${url}`.replace("./assets/./", "./assets/"), (gltf) => {
@@ -100,12 +182,16 @@ async function loadAssets() {
   const cars = [];
   const yardItems = [];
   const outsideItems = [];
+  const signs = [];
+  const houses = [];
+  const stores = [];
   let apartment = null;
   let fence = null;
   for (const asset of manifest.assets) {
     await new Promise((resolve) => {
       loader.load(`./assets/${asset}`.replace("./assets/./", "./assets/"), (gltf) => {
         const sceneObj = gltf.scene;
+        sceneObj.userData.assetName = asset;
         loaded.push(sceneObj);
         const name = asset.toLowerCase();
         if (name.includes("car_sedan") || name.includes("car_truck")) cars.push(sceneObj);
@@ -114,6 +200,9 @@ async function loadAssets() {
         else if (name.includes("tree_large")) yardItems.push(sceneObj);
         else if (name.includes("basketball")) yardItems.push(sceneObj);
         else if (name.includes("tree_small") || name.includes("tree_medium") || name.includes("fruit")) outsideItems.push(sceneObj);
+        else if (name.includes("traffic_sign")) signs.push(sceneObj);
+        else if (name.includes("house_")) houses.push(sceneObj);
+        else if (name.includes("store")) stores.push(sceneObj);
         scene.add(gltf.scene);
         resolve();
       }, undefined, () => resolve());
@@ -126,7 +215,10 @@ async function loadAssets() {
   if (apartment) aptBox.setFromObject(apartment);
 
   // Parking lot behind apartment, 2m offset
-  if (apartment) placeParkingLot(cars.map((c) => c), aptBox);
+  if (apartment) placeParkingLot(cars, aptBox);
+  if (apartment) placeTrafficSigns(signs, aptBox);
+  if (apartment) placeHouses(houses, aptBox);
+  if (apartment) placeStore(stores, aptBox);
 
   // Front yard fenced area (front = negative Z)
   if (apartment && fence) {

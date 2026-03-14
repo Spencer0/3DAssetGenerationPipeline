@@ -4,15 +4,25 @@
 - Tree: `blender --background --python blender/scripts/template_tree.py`
 - Fence: `blender --background --python blender/scripts/template_fence.py`
 - Apartment: `blender --background --python blender/scripts/template_apartment.py`
-- Car: `blender --background --python blender/scripts/template_car.py`
+- House (1 floor): `blender --background --python blender/scripts/template_house.py -- --floors 1 --out threejs-test/assets/house_1f.glb`
+- House (2 floor): `blender --background --python blender/scripts/template_house.py -- --floors 2 --out threejs-test/assets/house_2f.glb`
+- Car base (sedan): `blender --background --python blender/scripts/build_sedan_base.py`
+- Car base (truck): `blender --background --python blender/scripts/build_truck_base.py`
 
 ## Props
 - Fruit: `blender --background --python blender/scripts/prop_fruit.py`
 - Basketball: `blender --background --python blender/scripts/prop_basketball.py`
 - Vending: `blender --background --python blender/scripts/prop_vending_machine.py`
+- Traffic sign (stop): `blender --background --python blender/scripts/prop_traffic_sign.py -- --variant stop --out threejs-test/assets/traffic_sign_stop.glb`
+- Traffic sign (triangle): `blender --background --python blender/scripts/prop_traffic_sign.py -- --variant triangle --out threejs-test/assets/traffic_sign_triangle.glb`
+- Traffic sign (square): `blender --background --python blender/scripts/prop_traffic_sign.py -- --variant square --out threejs-test/assets/traffic_sign_square.glb`
 
 ## Export
 - `blender --background --python blender/scripts/export_glb.py -- --out threejs-test/assets/preview.glb`
+
+## Car Variants
+- Sedan variant: `blender --background --python blender/scripts/export_sedan_variant.py -- --out threejs-test/assets/car_sedan.glb`
+- Truck color: `blender --background --python blender/scripts/export_truck_color.py -- --out threejs-test/assets/car_truck.glb`
 
 ## Palette Library
 - Build and save a shared material library:

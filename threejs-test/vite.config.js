@@ -9,7 +9,7 @@ export default defineConfig({
     open: false
   },
   build: {
-    outDir: resolve(__dirname, "dist"),
+    outDir: resolve(__dirname, "..", "docs"),
     emptyOutDir: true
   }
 });
